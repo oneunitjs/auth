@@ -7,8 +7,6 @@ script or plug it into Express, Fastify, Koa, or uWebSockets.js.
 [![npm](https://img.shields.io/npm/v/@oneunit/auth.svg)](https://www.npmjs.com/package/@oneunit/auth)
 [![license](https://img.shields.io/npm/l/@oneunit/auth.svg)](./LICENSE)
 
-Monorepo: https://github.com/mayank040902/framework
-
 ## What is this?
 
 `@oneunit/auth` (v2.1.0-beta.1) is a library, not an identity service. It provides the
