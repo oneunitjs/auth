@@ -90,6 +90,22 @@ describe("OAuth/OIDC negative-test matrix (OAUTH-NEG)", () => {
     ).rejects.toThrow(OAuthError);
   });
 
+  it("missing state when PKCE is disabled is still rejected", async () => {
+    const provider = makeProvider({ pkce: false });
+    const oauth = oauthWith(provider);
+    await expect(
+      oauth.callback("test-neg", { code: "some-code" }),
+    ).rejects.toThrow(OAuthError);
+  });
+
+  it("callback without any state parameter is rejected even without PKCE", async () => {
+    const provider = makeProvider({ pkce: false });
+    const oauth = oauthWith(provider);
+    await expect(
+      oauth.callback("test-neg", { code: "some-code" }),
+    ).rejects.toThrow(OAuthError);
+  });
+
   it("unknown state is rejected", async () => {
     const oauth = oauthWith(makeProvider());
     await expect(
@@ -323,5 +339,24 @@ describe("OAuth/OIDC negative-test matrix (OAUTH-NEG)", () => {
     await expect(
       oauth.callback("nonexistent", { code: "c", state }),
     ).rejects.toThrow(ValidationError);
+  });
+
+  it("concurrent callbacks with the same state: only one succeeds", async () => {
+    const oauth = oauthWith(makeProvider());
+    const { state } = await oauth.authorize("test-neg", {
+      codeVerifier: "verifier-123",
+    });
+    const results = await Promise.allSettled([
+      oauth.callback("test-neg", { code: "c-1", state }),
+      oauth.callback("test-neg", { code: "c-2", state }),
+    ]);
+    const succeeded = results.filter(
+      (r) => r.status === "fulfilled",
+    ).length;
+    const failed = results.filter(
+      (r) => r.status === "rejected",
+    ).length;
+    expect(succeeded).toBe(1);
+    expect(failed).toBe(1);
   });
 });

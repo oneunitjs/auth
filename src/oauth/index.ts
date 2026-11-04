@@ -215,6 +215,13 @@ export class OAuth {
       throw new OAuthError("OAuth state is required");
     }
 
+    // State is mandatory for every authorization-code callback, independent of
+    // PKCE. PKCE and state protect against different classes of attacks, so
+    // disabling PKCE must never weaken CSRF protection.
+    if (!query.state) {
+      throw new OAuthError("OAuth state is required");
+    }
+
     const tokens = await provider.exchangeCode(config, {
       code: query.code,
       redirectUri: stored?.redirectUri ?? config.redirectUri,

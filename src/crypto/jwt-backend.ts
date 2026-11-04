@@ -173,7 +173,20 @@ export class JwtBackendImpl implements JwtBackend {
         header.kid = options.keyid;
       }
       if (options.header) {
-        Object.assign(header, options.header);
+        for (const [headerKey, headerValue] of Object.entries(options.header)) {
+          const normalized = headerKey.toLowerCase();
+          if (
+            normalized === "alg" ||
+            normalized === "typ" ||
+            normalized === "kid" ||
+            normalized === "crit"
+          ) {
+            throw new ValidationError(
+              `JWT header "${headerKey}" is reserved and cannot be overridden`,
+            );
+          }
+          (header as Record<string, unknown>)[headerKey] = headerValue;
+        }
       }
 
       return new SignJWT(signPayload as JWTPayload)
@@ -302,7 +315,7 @@ export class JwtBackendImpl implements JwtBackend {
         return normalizeSigningKey(
           await this.keyResolver.resolveSigningKey({
             algorithm: options.algorithm as JwtAlgorithm,
-            kid: options.jwtid,
+            kid: options.keyid,
           }),
         );
       }
@@ -339,6 +352,15 @@ export class JwtBackendImpl implements JwtBackend {
       // If we can't parse the header, fall back to static key
     }
 
+    // Select the base static verification key based on the intended token
+    // type (read from the unverified typ claim). Refresh tokens are signed
+    // with the refresh secret and must be verified with the refresh key,
+    // regardless of whether a kid is present.
+    const baseKey =
+      typ === "refresh" && this.refreshVerificationKey
+        ? this.refreshVerificationKey
+        : this.verificationKey;
+
     if (kid) {
       if (this.keyResolver) {
         return normalizeVerificationKey(
@@ -349,15 +371,13 @@ export class JwtBackendImpl implements JwtBackend {
           }),
         );
       }
-      // If we have a static verification key, use it regardless of kid
-      if (this.verificationKey) {
-        return normalizeVerificationKey(this.verificationKey);
+      // With a static key, honor the token-type distinction even when a kid
+      // is present.
+      if (baseKey) {
+        return normalizeVerificationKey(baseKey);
       }
-    } else if (this.verificationKey) {
-      if (typ === "refresh" && this.refreshVerificationKey) {
-        return normalizeVerificationKey(this.refreshVerificationKey);
-      }
-      return normalizeVerificationKey(this.verificationKey);
+    } else if (baseKey) {
+      return normalizeVerificationKey(baseKey);
     }
 
     throw new ConfigurationError(

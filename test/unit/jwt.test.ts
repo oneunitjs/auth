@@ -1,6 +1,6 @@
  
 import { describe, it, expect } from "vitest";
-import { JwtBackendImpl } from "../../src/crypto/jwt-backend.js";
+import { JwtBackendImpl, type JwtKeyResolver } from "../../src/crypto/jwt-backend.js";
 import {
   encode,
   decode,
@@ -219,5 +219,162 @@ describe("jwt unification (standalone functions vs JwtBackendImpl)", () => {
     expect((await backend.verify(refresh, { algorithms: ["HS256"] })).typ).toBe(
       "refresh",
     );
+  });
+});
+
+describe("JWT header / key regression", () => {
+  const ACCESS_KEY =
+    "access-secret-key-for-signing-and-verification-32-bytes";
+  const REFRESH_KEY =
+    "refresh-secret-key-for-signing-and-verification-32-bytes";
+
+  function typedBackend(
+    config: ConstructorParameters<typeof JwtBackendImpl>[0],
+  ): JwtBackendImpl {
+    return new JwtBackendImpl({
+      algorithmPolicy: {
+        signing: ["HS256"],
+        verification: ["HS256"],
+      },
+      ...config,
+    });
+  }
+
+  it("rejects custom header override of alg", async () => {
+    const backend = typedBackend({
+      signingKey: SECRET,
+      verificationKey: SECRET,
+    });
+    await expect(
+      backend.sign({ userId: 1 }, { header: { alg: "none" } }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects custom header override of typ", async () => {
+    const backend = typedBackend({
+      signingKey: SECRET,
+      verificationKey: SECRET,
+    });
+    await expect(
+      backend.sign({ userId: 1 }, { header: { typ: "refresh" } }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects custom header override of kid", async () => {
+    const backend = typedBackend({
+      signingKey: SECRET,
+      verificationKey: SECRET,
+    });
+    await expect(
+      backend.sign({ userId: 1 }, { header: { kid: "evil" } }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("rejects custom header override of crit", async () => {
+    const backend = typedBackend({
+      signingKey: SECRET,
+      verificationKey: SECRET,
+    });
+    await expect(
+      backend.sign({ userId: 1 }, { header: { crit: ["exp"] } }),
+    ).rejects.toThrow(ValidationError);
+  });
+
+  it("still permits non-security custom headers", async () => {
+    const backend = typedBackend({
+      signingKey: SECRET,
+      verificationKey: SECRET,
+    });
+    const token = await backend.sign(
+      { userId: 1 },
+      { keyid: "k1", header: { custom: "x", app: "auth" } },
+    );
+    const header = JSON.parse(
+      Buffer.from(token.split(".")[0], "base64url").toString("utf8"),
+    );
+    expect(header.custom).toBe("x");
+    expect(header.app).toBe("auth");
+    expect(header.alg).toBe("HS256");
+    expect(header.typ).toBe("JWT");
+    expect(header.kid).toBe("k1");
+  });
+
+  it("verifies a refresh JWT with kid using the refresh verification key", async () => {
+    const backend = typedBackend({
+      signingKey: ACCESS_KEY,
+      refreshSigningKey: REFRESH_KEY,
+      verificationKey: ACCESS_KEY,
+      refreshVerificationKey: REFRESH_KEY,
+    });
+    const token = await backend.sign(
+      { userId: 1, typ: "refresh" },
+      { keyid: "refresh-kid" },
+    );
+    const claims = await backend.verify(token, {
+      algorithms: ["HS256"],
+      acceptTokenType: "refresh",
+    });
+    expect(claims.userId).toBe(1);
+    expect(claims.typ).toBe("refresh");
+  });
+
+  it("rejects a refresh JWT with kid when verified with the access key", async () => {
+    const backend = typedBackend({
+      signingKey: ACCESS_KEY,
+      refreshSigningKey: REFRESH_KEY,
+      verificationKey: ACCESS_KEY,
+      refreshVerificationKey: REFRESH_KEY,
+    });
+    const token = await backend.sign(
+      { userId: 1, typ: "refresh" },
+      { keyid: "refresh-kid", expiresIn: 0 },
+    );
+    // Force verification against the access key by bypassing the refresh key.
+    const accessOnly = typedBackend({
+      signingKey: ACCESS_KEY,
+      verificationKey: ACCESS_KEY,
+    });
+    await expect(
+      accessOnly.verify(token, { algorithms: ["HS256"] }),
+    ).rejects.toThrow();
+  });
+
+  it("key resolver selects the correct verification key by kid", async () => {
+    const keys = new Map([
+      [
+        "key-a",
+        Buffer.from("signing-key-a-for-verification-32-bytes-long"),
+      ],
+      [
+        "key-b",
+        Buffer.from("signing-key-b-for-verification-32-bytes-long"),
+      ],
+    ]);
+    const resolver: JwtKeyResolver = {
+      resolveSigningKey: async ({ kid }) => keys.get(kid) ?? undefined,
+      resolveVerificationKey: async ({ kid }) => keys.get(kid) ?? undefined,
+    };
+    const backend = typedBackend({ keyResolver: resolver });
+    const tokenA = await backend.sign({ userId: 1 }, { keyid: "key-a" });
+    const tokenB = await backend.sign({ userId: 2 }, { keyid: "key-b" });
+    const claimsA = await backend.verify(tokenA, { algorithms: ["HS256"] });
+    const claimsB = await backend.verify(tokenB, { algorithms: ["HS256"] });
+    expect(claimsA.userId).toBe(1);
+    expect(claimsB.userId).toBe(2);
+  });
+
+  it("key resolver rejects an unknown kid", async () => {
+    const resolver: JwtKeyResolver = {
+      resolveSigningKey: async () => SECRET,
+      resolveVerificationKey: async () => undefined,
+    };
+    const backend = typedBackend({
+      signingKey: SECRET,
+      keyResolver: resolver,
+    });
+    const token = await backend.sign({ userId: 1 }, { keyid: "unknown" });
+    await expect(
+      backend.verify(token, { algorithms: ["HS256"] }),
+    ).rejects.toThrow();
   });
 });
