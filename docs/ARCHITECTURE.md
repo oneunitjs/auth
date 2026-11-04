@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-`@oneunit/auth` (v2.0.2) is a framework-agnostic authentication and
+`@oneunit/auth` (v2.1.0-beta.1) is a framework-agnostic authentication and
 authorization library for Node.js (>=20). It provides JWT issuance and
 verification, access/refresh token lifecycle management, password hashing,
 role-based access control (RBAC), OAuth 2.0 / OpenID Connect authorization-code
@@ -160,11 +160,6 @@ PostgreSQL, Redis), `ioredis`, `kafkajs`, `pg`
 /docs/
   ARCHITECTURE.md               # This file
   features.md                   # Feature index
-  features/01-core-authentication.md ... 13-platform-compatibility.md
-  features/README.md
-  test/*-test-plan.md           # Test plans for each module
-/examples/
-  basic.ts                      # Basic usage example
 /plans/
   p0-*/plan.md                  # Implementation plans
 /plans/
@@ -534,7 +529,6 @@ flowchart TD
     C --> C5[VersionStore]
     C --> C6[UserStore]
     
-    D --> D1[MemoryKeyValueStore]
     D --> D2[MemorySessionStore]
     D --> D3[MemoryRefreshStore]
     
@@ -545,7 +539,6 @@ flowchart TD
     C5 --> I[Session Version Increment]
     C6 --> J[User Lookup & Creation]
     
-    D1 --> E
     D2 --> F
     D3 --> G
     
@@ -1044,27 +1037,25 @@ Adapters translate framework requests → `auth.verifyRequest()` → framework r
 
 ## 12. Build and Distribution Architecture
 
-**Build:** `tsc -p tsconfig.build.esm.json` → `dist/esm/`, `tsc -p tsconfig.build.cjs.json` → `dist/cjs/`, then `node scripts/fix-cjs-imports.cjs`.
+**Build:** `tsc -p tsconfig.build.esm.json` → `dist/esm/`, `tsc -p tsconfig.build.cjs.json` → `dist/cjs/`.
 
 **Package exports:**
 - `.` → `dist/types/index.d.ts` (types), `dist/esm/index.js` (import), `dist/cjs/index.cjs` (require)
 - `./*` → subpath mappings for all entry points
 
-**`files`:** `dist`, `src`, `examples`, `LICENSE`, `README.md`, `CHANGELOG.md`, `docs`
+**`files`:** `dist`, `LICENSE`, `README.md`
 
 **Scripts:**
 - `npm run build` — clean build (ESM + CJS + fix imports)
-- `npm test` — vitest run (42 test files, 489 tests)
+- `npm test` — vitest run
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run lint` — eslint on `src` and `test`
 - `npm run dev` — `tsc -w`
-- `npm run example` — build + run `examples/basic.ts`
 
 **Side effects:** `false` (tree-shakeable).
 
 ## 13. Testing Architecture
 
-42 test files across:
 - `test/unit/` — JWT, password, RBAC, OAuth, HTTP, adapters, diagnostics, logging, context, external-token, compatibility, store contracts, matcher cache, shared cache, observer, platform, exports, real-world metrics, bcrypt, uWS.
 - `test/oauth/` — OAuth flows, PKCE, redirect URI, advanced revocation.
 - `test/providers/` — OIDC Google, JWKS, live providers.
@@ -1137,7 +1128,6 @@ Adapters translate framework requests → `auth.verifyRequest()` → framework r
 | `src/types/index.ts` | All public TypeScript types |
 | `src/utils.ts` | Shared utilities (token extraction, hashing, randomization, etc.) |
 | `src/platform.ts` | Platform compatibility constants |
-| `examples/basic.ts` | Basic usage example |
 
 ---
 
@@ -1146,21 +1136,12 @@ Adapters translate framework requests → `auth.verifyRequest()` → framework r
 Use these authoritative locations for exhaustive detail rather than duplicating
 it in this document:
 
-- **Feature catalog:** `docs/features.md` and files under `docs/features/`.
+
 - **Configuration defaults and limits:** implementation defaults in
   `src/crypto/password-hasher.ts`, `src/crypto/jwks.ts`, `src/http/transport.ts`,
   and `src/http/retry.ts`; types in `src/types/index.ts`.
-- **Provider guide:** `docs/features/04-oauth-social-login.md`.
-- **External-token guide:** `docs/features/05-external-token-verification.md`.
-- **Adapter behavior:** `docs/features/10-adapters.md`.
-- **Types reference:** `docs/features/12-types.md`.
-- **Platform compatibility:** `docs/features/13-platform-compatibility.md` and
-  `src/platform.ts`.
-- **Tests:** commands and plans under `docs/test/`; run via
-  `npm run test:unit`, `npm run test:security`, `npm run test:oauth`,
-  `npm run test:providers`, `npm run test:integration`.
-- **Adapter test plans:** `docs/test/adapters-test-plan.md`, etc.
-- **Examples:** `examples/basic.ts` and `examples/`.
+- **Platform compatibility:** `src/platform.ts`.
+- **Tests:** run via `npm run test:unit`, `npm run test:security`, `npm run test:oauth`, `npm run test:providers`, `npm run test:integration`.
 - **Package metadata:** `package.json`, lockfile, and `src/index.ts` exports.
 
 ## 17. Documentation Maintenance

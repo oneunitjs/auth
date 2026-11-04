@@ -1,6 +1,6 @@
 {
   "name": "@oneunit/auth",
-  "version": "2.0.2",
+  "version": "2.1.0-beta.1",
   "description": "Framework-agnostic authentication: JWT, generic RBAC, password hashing, and social OAuth. Works standalone or with Express, Fastify, Koa, and uWebSockets.js.",
   "type": "module",
   "main": "./dist/cjs/index.cjs",
@@ -28,12 +28,8 @@
   },
   "files": [
     "dist",
-    "src",
-    "examples",
     "LICENSE",
-    "README.md",
-    "CHANGELOG.md",
-    "docs"
+    "README.md"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.esm.json && tsc -p tsconfig.build.cjs.json && node scripts/fix-cjs-imports.cjs",
@@ -72,7 +68,11 @@
     "typescript",
     "oneunit"
   ],
-  "author": "mayank",
+  "author": {
+    "name": "mayank",
+    "url": "https://github.com/oneunitjs"
+  },
+  "contributors": [],
   "license": "MIT",
   "sideEffects": false,
   "engines": {
@@ -90,7 +90,11 @@
   "bugs": {
     "url": "https://github.com/oneunitjs/auth/issues"
   },
-  "homepage": "https://github.com/oneunitjs/auth#readme",
+  "homepage": "https://github.com/oneunitjs/auth/tree/master/packages/auth#readme",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/oneunitjs"
+  },
   "dependencies": {
     "@noble/hashes": "^2.4.0",
     "jose": "^6.2.15"

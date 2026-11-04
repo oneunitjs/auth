@@ -1,385 +1,699 @@
 # `@oneunit/auth` Feature Reference
 
-This document describes the capabilities that are implemented in the current
-package. It is intentionally code-oriented: names match exports in
-`src/index.ts`, and statements are paired with the implementation that backs
-them.
+This document is the implementation-oriented feature index for `@oneunit/auth` v2.1.0-beta.1. It follows the package architecture and README: the README explains how consumers use the library, `ARCHITECTURE.md` explains module boundaries and runtime behavior, and this file summarizes the implemented capabilities and their public extension points.
 
-## Package shape
+> **Accuracy rule:** This file describes package capabilities and contracts. It does not claim that every deployment has configured durable storage, enabled revocation, or completed live-provider verification. Application-owned infrastructure and operational responsibilities are called out explicitly.
 
-- Runtime dependencies: `jose`; `@noble/hashes` for default Argon2id password hashing.
-- No framework peer dependencies. Adapters are structural and do not import
-  Express, Fastify, Koa, or uWebSockets.js.
-- Node.js 20+.
-- Public entry point is `src/index.ts`; folder `index.ts` files are the only
-  folder entry points.
-- Side-effect-free import, with explicit construction through `createAuth`, `createRBAC`,
-  `createOAuth`, and `createProvider`.
+## 1. Package overview
 
-## Optional unified persistence adapter
+`@oneunit/auth` is a framework-agnostic authentication and authorization library for Node.js 20+. It is a library, not a hosted identity service or user directory.
 
-`PersistenceAdapter` is the public infrastructure-agnostic persistence contract.
-Consumers connect their existing infrastructure (Redis, PostgreSQL, MongoDB,
-DynamoDB, custom systems, or a composition of several) by implementing
-`PersistenceAdapter` and passing it via `createAuth({ secret, persistence })`.
+It provides:
 
-- The library owns contracts, routing, atomicity, and security semantics.
-- The application owns connections, pools, credentials, migrations, and
-  lifecycle.
-- Domains: `keyValue`, `sessions`, `refreshTokens`, `revocations`, `versions`,
-  `users`, plus optional `initialize()`/`close()`.
-- When `persistence` is omitted, existing in-memory stores are used (existing
-  behavior, no persistence across restarts).
-- Explicit individual stores (`userStore`, `refreshStore`, `sessionStore`, …)
-  take precedence over adapter-provided domains.
-- Adapter interfaces are validated by `createAdapterRegistry` (or manually
-  via `validateStorageAdapter`) at initialization.
-- `initialize()`/`close()` coordinate adapter lifecycle; the application
-  controls connection ownership.
-- No vendor SDK (Redis, `pg`, `kafkajs`, …) is required by the package —
-  runtime dependencies are `jose` and `@noble/hashes` (for default Argon2id password hashing).
-- `EventAdapter` is a separate optional transport for auth lifecycle events;
-  it does not provide authoritative persistence.
-- Persistence errors are normalized into `PersistenceErrorCode`/`PersistenceErrorInfo`.
+- JWT issuance and verification with configurable signing backends and algorithm policies.
+- Access-token and refresh-token lifecycle management.
+- Refresh-token rotation and replay protection through atomic storage operations.
+- Optional session versioning and session revocation.
+- RBAC with role inheritance, wildcard permissions, cycle detection, and bounded caches.
+- Password hashing with Argon2id as the default, scrypt legacy support, and optional bcrypt.
+- OAuth 2.0 / OIDC authorization-code flows, PKCE, state management, and 14 built-in providers.
+- External JWT verification against explicitly trusted issuers and JWKS.
+- OAuth token introspection (RFC 7662).
+- Framework adapters for Express, Fastify, Koa, and uWebSockets.js.
+- Replaceable user, refresh-token, session, key-value, revocation, version, and event infrastructure.
+- HTTP transport with timeouts, cancellation, response-size limits, and bounded retry.
+- Request-scoped auth context, diagnostics, structured safe logging, and typed errors.
+- ESM, CommonJS, and TypeScript declaration distribution.
 
-## Authentication core (`createAuth`)
+It does **not** provide a managed user directory, MFA, email verification, password-reset workflows, account lockout, or application-level rate limiting. Those remain responsibilities of the integrating application.
 
-`createAuth(options)` builds a single `Auth` facade. Security-sensitive values are
-validated at construction time, including the required JWT secret.
+## 2. Package and runtime architecture
 
-Core capabilities:
+### Runtime and packaging
 
-- Issue access and refresh tokens.
-- Verify tokens with algorithm pinning and claim checks.
-- Extract bearer tokens from headers, cookies, and (opt-in) query strings.
-- Refresh rotation with reuse detection.
-- Password registration and login with a user store.
-- OAuth 2.0 / OIDC code flow integration.
-- Generic RBAC checks through a configured RBAC instance.
-- Session revocation through an optional session store.
-- Hooks (`beforeLogin`, `afterLogin`, `afterVerify`) and custom claim extractors.
-- Reserved-claim protection so request or profile data cannot overwrite identity,
-  roles, permissions, or token type.
+- Node.js: `>=20`.
+- Runtime dependencies: `jose` and `@noble/hashes`.
+- Optional dependency: `bcrypt`, only when using the bcrypt hasher.
+- Frameworks and database clients are not runtime dependencies or required framework peer dependencies.
+- The package is dual-published as ESM and CommonJS and includes TypeScript declarations.
+- `src/index.ts` is the public source entry point; published entry points are defined by `package.json` exports.
+- Imports are designed to be side-effect-free. Consumers explicitly construct services using factories such as `createAuth`, `createRBAC`, `createOAuth`, and `createProvider`.
 
-`Auth` never depends on a web framework or persistence implementation. Stores and
-adapters are supplied by the caller.
+### Architectural layers
 
-## JWT services
+| Layer | Main location | Responsibility |
+|---|---|---|
+| Public API | `src/index.ts`, `src/types/` | Stable exports and public contracts |
+| Composition root | `src/core/auth.ts` | Construct and coordinate authentication services |
+| Cryptography | `src/crypto/` | JWT, password hashing, signing backends, JWKS |
+| Authorization | `src/rbac/` | Roles, inheritance, permission matching |
+| OAuth/OIDC | `src/oauth/` | Provider registration, authorization, callback, introspection |
+| External token verification | `src/external-token/` | Validate tokens from trusted external issuers |
+| HTTP | `src/http/` | Configurable HTTP client, limits, retry |
+| Adapters and contracts | `src/adapters/` | Framework translation and storage/event contracts |
+| Stores | `src/stores/` | In-memory development/test stores |
+| Cache | `src/cache/` | Cache provider and shared JWKS cache support |
+| Context and diagnostics | `src/core/context.ts`, `src/diagnostics/` | Request context and operational events |
+| Logging and errors | `src/logging/`, `src/errors/` | Secret-safe logging and typed failures |
+| Shared helpers | `src/utils.ts`, `src/platform.ts` | Token parsing, randomization, compatibility helpers |
 
-Functions in `src/crypto/jwt.ts` and exposed through `src/index.ts`:
+### Dependency direction
 
-- `encode` signs a payload with HS256 by default and supports `expiresIn`,
-  `subject`, `issuer`, `audience`, `algorithm`, `jwtid`, and clock options.
-- `decode` verifies signature, issuer, audience, algorithm, expiration, and
-  returns claims only after successful verification.
-- `decodeUnsafe` decodes without verification for inspection only.
-- `encodeAccessToken` signs with `typ: "access"`.
-- `encodeRefreshToken` signs with `typ: "refresh"`.
+The application consumes the public API. The `Auth` core composes lower-level services but does not depend on Express, Fastify, Koa, uWebSockets.js, Redis, PostgreSQL, or another concrete database client.
 
-Safety properties:
+- Framework adapters translate framework requests into core calls and map typed errors back to framework responses.
+- Cryptography modules do not depend on HTTP frameworks or user repositories.
+- Persistence and event interfaces are package contracts; concrete infrastructure implementations are supplied by the application.
+- Internal modules use the package's NodeNext/ESM-compatible import conventions.
+- Only documented package entry points and exports should be treated as public API.
 
-- Algorithm confusion is prevented by pinning the algorithm list for JWT access tokens.
-- Missing secrets and invalid configuration fail early.
-- Refresh tokens carry `jti` and cannot be used as access tokens.
-- Claim extractors cannot introduce reserved claims (`sub`, `userId`, `roles`,
-  `permissions`, `typ`, `iss`, `aud`, `exp`, `iat`, `nbf`, `jti`, `sv`, `sid`).
-- Additional claims cannot override reserved claims.
+## 3. Authentication core
 
-## RBAC
+**Main implementation:** `src/core/auth.ts`  
+**Factory:** `createAuth(options)`
 
-`src/rbac/index.ts` implements a generic role and permission model:
+`createAuth` constructs the `Auth` facade and validates security-sensitive configuration at initialization, including the required signing secret.
 
-- Roles declare permissions and optional inheritance.
-- Permission wildcards:
-  - `*` matches one dot-separated segment boundary according to README’s
-    documented table.
-  - `**` spans any number of segments.
-- `createRBAC` constructs an instance from a role definition.
-- `defineRoles` provides a typed helper for declarations.
-- `matchPermission` tests one granted permission against one required permission.
-- `can` evaluates a subject against a permission.
-- `cannot` is the negation of `can`.
-- `authorize` throws `ForbiddenError` on denial.
-- `hasAnyRole` checks whether a subject holds any of the given roles.
-- `hasAllRoles` checks whether a subject holds all of the given roles.
-- `snapshot` returns a plain-object view of current roles, permissions, and inheritance.
+### Core operations
 
-Roles are application-defined. The package ships no hard-coded product roles.
-An unprivileged `defaultRole` is deliberately allowed and is assigned to
-subjects without `roles`/`role` fields (such as `{}`), but never to `null`,
-`undefined`, or `""`.
+- `login()` — creates an authenticated session and issues access/refresh tokens.
+- `verify()` — verifies an access token and its configured claims/type policy.
+- `verifyRequest()` — extracts a credential from a request-like object and verifies it.
+- `refresh()` — validates and rotates a refresh token.
+- `revoke()` / `logout()` — revokes the supplied refresh-token record.
+- `revokeSession()` — revokes a single session when the configured store supports it.
+- `revokeAllSessions()` — increments the user's session version when a suitable session store is configured.
+- `register()` and `loginWithPassword()` — password-based registration/login through a caller-supplied user store.
+- `loginWithOAuth()` — integrates OAuth provider profile results with user lookup/linking/creation.
+- Authorization helpers — expose RBAC checks through the auth facade when RBAC is configured.
 
-## Passwords
+### Extensibility
 
-`src/crypto/password.ts`:
+- Lifecycle hooks: `beforeLogin`, `afterLogin`, and `afterVerify`.
+- Custom claim extractors.
+- Custom JWT backend.
+- Custom password hasher.
+- User, refresh-token, session, and unified persistence stores.
+- OAuth providers, logger, diagnostics observer, and HTTP configuration.
 
-- `hashPassword` hashes with scrypt using serialized cost parameters.
-- `verifyPassword` verifies against stored parameters and returns `false` for
-  outside bounds.
-- `needsRehash` indicates whether a stored hash should be upgraded.
-- Cost parameters are bounded defensively before hashing to prevent
-  attacker-controlled hashes from forcing excessive work.
+Reserved identity/security claims are protected from being overwritten by user/profile data or custom claim extraction. The reserved set includes claims such as `sub`, `userId`, `roles`, `permissions`, `typ`, `iss`, `aud`, `exp`, `iat`, `nbf`, `jti`, `sv`, and `sid`.
 
-`Auth` integrates password hashing through `loginWithPassword`, `register`, and
-password extractors.
+`Auth` is not a user database. A `UserStore` is an interface supplied by the integrating application.
 
-## OAuth 2.0 and OIDC
+## 4. JWT issuance and verification
 
-### Core flow
+**Main implementation:** `src/crypto/jwt.ts`, `src/crypto/jwt-backend.ts`
 
-`src/oauth/index.ts` implements:
+### Public operations
 
-- State generation and storage with optional TTL.
+- `encode(payload, secret, options)` — signs a JWT.
+- `decode(token, secret, options)` — verifies a JWT before returning claims.
+- `decodeUnsafe(token)` — decodes without signature verification; inspection only, never for authorization decisions.
+- `encodeAccessToken(...)` — issues a token with access-token type separation.
+- `encodeRefreshToken(...)` — issues a token with refresh-token type separation.
+- `withTyp(...)` — builds token-type-specific options.
+
+### Supported behavior
+
+- HS256 is the default algorithm policy.
+- The package supports the configured HS256, RS256, and ES256 algorithm options described in the README.
+- Algorithms are pinned by server configuration; a token cannot choose an algorithm that the verifier has not allowed.
+- Issuer, audience, subject, expiration, not-before, and clock-tolerance validation are supported where configured.
+- Signing and verification keys can be separated.
+- Refresh signing/verification keys can be configured separately from access-token keys.
+- `kid`-based key resolution is supported through a key resolver.
+- Access and refresh tokens have distinct `typ` values.
+- Refresh tokens carry a unique `jti` used by refresh-token storage.
+
+### Security notes
+
+- The configured secret is required and must be high-entropy material; the README requires at least 32 bytes.
+- A separate `refreshSecret` is supported and recommended.
+- `decodeUnsafe` must never be used to authorize a request.
+- A valid signature alone does not establish application authorization; RBAC and application policy remain separate.
+
+## 5. Refresh-token lifecycle
+
+**Main implementation:** `src/core/auth.ts`, refresh-store contracts, `src/stores/memory/refresh-store.ts`
+
+Refresh tokens are distinct from access tokens and rotate on use.
+
+### Rotation behavior
+
+1. Verify the refresh token signature, claims, and token type.
+2. Require its unique `jti`.
+3. Atomically consume the corresponding refresh-token record.
+4. Reject missing, expired, revoked, or already-consumed records.
+5. Check session-version policy when session versioning is configured.
+6. Issue the next access/refresh token pair.
+
+A refresh store used for rotation must implement atomic `consume`. If the required atomic operation is unavailable, refresh rotation must fail rather than silently relying on a non-atomic read-then-delete sequence.
+
+### Replay protection and deployment
+
+- Only one concurrent consumer should be able to consume a given refresh record.
+- The storage implementation must preserve that guarantee across all application instances.
+- In-memory stores are process-local and are intended for development/test use, not multi-instance production.
+- A durable Redis/SQL/other store must implement the contract's atomic operation correctly.
+- `revoke()`/`logout()` remove refresh-token records. They do not, by themselves, invalidate already-issued stateless access tokens.
+
+## 6. Session versioning and revocation
+
+**Main implementation:** `src/core/auth.ts`, session/version store contracts
+
+Session revocation is opt-in and depends on configured storage.
+
+### Session versioning
+
+- Tokens can carry an `sv` (session-version) claim.
+- Verification and refresh compare the token's version with the current stored version when session versioning is enabled.
+- `revokeAllSessions(userId)` increments the user's version to invalidate tokens associated with older versions.
+- `sessionVersionPolicy` controls handling of tokens without an `sv` claim: `reject`, `migration`, or `disabled`.
+
+### Single-session revocation
+
+A configured session/revocation store may support revoking an individual session identifier. The exact capability depends on the store contract and implementation supplied by the application.
+
+### Important limitation
+
+Without a suitable shared session store, a signed JWT remains valid until its expiry. Stateless JWT verification cannot retroactively un-sign a token. The README documents that `revokeAllSessions()` returns `false` when the required store is not configured rather than claiming revocation succeeded.
+
+For production deployments requiring cross-instance revocation, use shared durable storage and test the consistency/atomicity behavior of that implementation.
+
+## 7. Password hashing
+
+**Main implementation:** `src/crypto/password.ts`, `src/crypto/password-hasher.ts`
+
+### Algorithms
+
+| Hasher | Status | Notes |
+|---|---|---|
+| Argon2id | Default | Recommended modern password-hashing path; configurable memory/cost/parallelism parameters |
+| scrypt | Legacy and supported | Existing hashes can be verified and upgraded |
+| bcrypt | Optional | Requires the optional `bcrypt` binding |
+
+### Public helpers and classes
+
+- `hashPassword`, `verifyPassword`, `needsRehash`
+- `hashScryptPassword`, `verifyScryptPassword`, `scryptNeedsRehash`
+- `createPasswordHasher`
+- `getDefaultPasswordHasher`, `setDefaultPasswordHasher`
+- `Argon2idPasswordHasher`
+- `ScryptPasswordHasher`
+- `BcryptPasswordHasher`
+- `CompositePasswordHasher`
+- `isBcryptAvailable`
+- `ARGON2ID_RECOMMENDED_PROFILE`
+
+`CompositePasswordHasher` dispatches verification based on the stored hash prefix, allowing supported legacy hashes to be verified and upgraded. Unknown formats and out-of-policy cost parameters are rejected safely.
+
+### Application responsibilities
+
+- Store password hashes, never plaintext passwords.
+- Use `needsRehash` during successful authentication/migration to upgrade old hashes.
+- Apply login rate limiting and abuse controls in the application.
+- Benchmark Argon2id settings against the deployment's memory and concurrency budget.
+- Do not log passwords or stored hashes.
+
+## 8. RBAC
+
+**Main implementation:** `src/rbac/index.ts`, `src/rbac/matcher-cache.ts`  
+**Factory/helper:** `createRBAC`, `defineRoles`, `matchPermission`
+
+RBAC is generic and application-defined. The package ships no product-specific roles.
+
+### Capabilities
+
+- Define roles and permissions.
+- Single-parent and multiple-parent role inheritance.
+- Detect inheritance cycles.
+- Resolve inherited roles and permissions.
+- Match permission patterns using wildcards.
+- Evaluate `can`, `cannot`, `authorize`, `hasRole`, `hasAnyRole`, and `hasAllRoles`.
+- Inspect a detached snapshot of role definitions.
+- Cache subject permission resolution with a bounded subject cache.
+- Use a bounded LRU/TTL matcher cache with statistics.
+
+### Wildcards
+
+- `*` matches one permission segment.
+- `**` matches any suffix.
+- Permission segments are delimited by `.` and `:` according to the implementation.
+- Literal segments are escaped when compiled for matching.
+
+For example, the README documents `invoice.*` matching `invoice.read` but not `invoice.read.all`.
+
+### Role trust boundary
+
+- Role definitions are supplied by the application.
+- Public signup input must not be trusted to assign privileged roles.
+- User-record permissions are not trusted by default; `trustUserPermissions` must be explicitly enabled to honor them.
+- The optional default role is intended to be unprivileged.
+
+## 9. OAuth 2.0 and OpenID Connect
+
+**Main implementation:** `src/oauth/`, `src/oauth/providers/`, `src/oauth/redirect-uri.ts`
+
+### Authorization-code flow
+
+The OAuth service supports:
+
+- Provider registration and lookup.
 - Authorization URL generation.
-- Code exchange.
-- Profile fetching.
-- Automatic PKCE generation, enabled by default for every authorization-code flow (S256).
-- Provider lookup through `builtinProviders` and `getProvider`.
-- Custom providers through `createProvider`.
+- Cryptographically random state generation and storage with TTL.
+- Authorization-code exchange.
+- Provider profile retrieval and mapping.
+- Callback validation and state consumption.
+- Provider-specific configuration and custom providers.
+- Diagnostic events for authorization and callback operations.
 
 ### PKCE
 
-`src/oauth/providers/index.ts` exports:
+- PKCE S256 is enabled by default for authorization-code flows.
+- A fresh verifier is generated for each authorization transaction.
+- The challenge is sent in the authorization request.
+- The verifier is bound to the state transaction and consumed during callback processing.
+- The verifier is not sent in the authorization URL.
+- Disabling PKCE with `pkce: false` is an explicit security downgrade and should be reserved for providers that cannot support it.
 
-- `pkceVerifier`: 32-byte base64url verifier (RFC 7636).
-- `pkceChallenge`: S256 (SHA-256, base64url) challenge (RFC 7636).
+Helpers include `pkceVerifier` and `pkceChallenge`.
 
-PKCE is enabled by default for every provider. A fresh, cryptographically secure
-verifier is generated per authorization transaction, an S256 challenge is added to
-the authorization URL, and the verifier is bound to the state transaction and
-consumed atomically during callback token exchange. The verifier is never sent in
-the authorization URL and never appears in errors or logs.
+### Redirect URI policy
 
-Disable PKCE only for providers that genuinely cannot support it, with an explicit
-`pkce: false` in that provider's config. This is a documented security downgrade.
+Every authorization-code flow validates its redirect URI against trusted configuration:
 
-### Redirect URI validation
-
-Every OAuth authorization-code flow validates its redirect URI against a trusted
-local allowlist before the authorization URL is constructed:
-
-- The allowlist comes from trusted configuration (`redirectUriPolicy.allowedRedirectUris`), never from request parameters.
-- Matching is exact string equality: no prefix, suffix, substring, wildcard-host, or implicit subdomain matching.
-- HTTPS is required except for an explicitly opted-in localhost development exception (`allowLocalhostHttp: true`, loopback hosts only).
-- Embedded credentials, malformed URLs, and dangerous schemes (`javascript:`, `data:`, etc.) are rejected.
-- An absent or empty allowlist fails closed: no redirect URI is permitted.
-- The validated URI is bound to the OAuth state transaction. Callback processing uses the stored URI, never callback-supplied input.
-- Validation failures return a typed `InvalidRedirectUriError` without leaking secrets.
-
-Validation errors use error code `INVALID_REDIRECT_URI`. Specific failure categories
-include `MISSING_REDIRECT_URI`, `MALFORMED_REDIRECT_URI`, `EMBEDDED_CREDENTIALS`,
-`UNSUPPORTED_SCHEME`, `LOCALHOST_HTTP_NOT_ALLOWED`, `NON_LOCALHOST_HTTP`,
-`EMPTY_ALLOWLIST`, and `NOT_ALLOWED`.
-
-### Optional structured logging
-
-`src/logging/logger.ts` defines a `Logger` type and a `createSafeLogger` utility.
-
-```ts
-import type { Logger } from "@oneunit/auth";
-
-const logger: Logger = {
-  info: (payload, message) => {
-    applicationLogger.info(message, payload);
-  },
-};
-
-const auth = createAuth({ secret: "…", logger });
-```
-
-- **Optional:** Logging is disabled by default. Omitting `logger` produces no console output.
-- **No logging dependency:** No Pino, Winston, Bunyan, or other logger is added as a runtime dependency.
-- **Structural compatibility:** Any object whose methods satisfy the `Logger` shape can be passed directly—no adapter required.
-- **All methods optional:** `debug`, `info`, `warn`, and `error` can each be omitted independently.
-- **Failure isolation:** Exceptions thrown by logger methods are swallowed and never interrupt authentication, authorization, token, or session operations.
-- **Secret safety:** Passwords, raw tokens, authorization codes, OAuth state, PKCE verifiers, client secrets, and private keys are never included in logged payloads.
-- **Structured events:** Internal logging uses stable event names (e.g. `auth.login.started`, `auth.login.succeeded`, `auth.token.validation.succeeded`, `auth.oauth.callback.received`, `auth.session.revoked`) with non-sensitive metadata.
-
+- `redirectUriPolicy.allowedRedirectUris` is the trusted allowlist.
+- Matching is exact string equality.
+- Wildcard host, prefix, suffix, and implicit subdomain matching are not used.
+- HTTPS is required except for explicitly enabled loopback development addresses.
+- Embedded credentials, malformed URLs, and dangerous schemes are rejected.
+- Missing or empty allowlists fail closed.
+- The validated URI is bound to the state transaction; callback-supplied redirect values are not trusted.
+- Failures use `InvalidRedirectUriError` / `INVALID_REDIRECT_URI`.
 
 ### Built-in providers
 
-Fourteen built-in providers are defined: Google, GitHub, Instagram, Facebook,
-X/Twitter, Discord, Apple, LinkedIn, Microsoft, Reddit, Twitch, Slack, Spotify,
-and TikTok. Each provider declares authorization and token URLs, scopes, profile
-mapping, and optional profile parsing logic.
+The package includes 14 providers:
+
+1. Google
+2. GitHub
+3. Instagram
+4. Facebook
+5. X/Twitter
+6. Discord
+7. Apple
+8. LinkedIn
+9. Microsoft
+10. Reddit
+11. Twitch
+12. Slack
+13. Spotify
+14. TikTok
+
+Provider definitions include authorization/token endpoints, scopes, profile mapping, and provider-specific parsing where needed.
 
 ### Custom providers
 
-`createProvider(definition)` allows a custom OAuth provider with:
+`createProvider(definition)` supports:
 
-- Required `id`, `authorizationUrl`, and `tokenUrl`.
-- Scopes.
-- Profile mapping or custom `parseProfile`.
-- PKCE and token authentication method settings.
-- Extra authorization and token parameters.
-- User info headers.
+- Provider ID and authorization/token endpoints.
+- Optional user-info endpoint.
+- Scopes and profile mapping.
+- Custom sync/async profile parsing.
+- PKCE configuration.
+- Token authentication method (`body` or `basic`).
+- Additional authorization/token parameters.
+- User-info headers.
 
-### Provider user linking
+### Provider account linking
 
-`Auth.loginWithOAuth` supports optional user-store methods:
+`Auth.loginWithOAuth` can use optional `UserStore` methods such as:
 
 - `findByProvider`
 - `findByEmail`
 - `createFromProvider`
 - `linkProvider`
 
-If no store is configured, it creates a synthetic subject such as
-`google:123`. Profile subject IDs must be stable and non-empty; otherwise
-`ProviderError` is thrown rather than collapsing users.
+Without a user store, the flow can create a synthetic subject based on provider and stable provider subject ID. Empty or unstable provider subject identifiers are rejected rather than silently merging identities.
 
 ### OIDC ID-token verification
 
-For Google and Apple, ID tokens are verified against JWKS:
+The architecture documents JWKS-backed ID-token verification for Google and Apple, and also notes Twitter support in the OAuth module. Verification includes the applicable signature, issuer, audience, expiration, nonce, algorithm, and key-ID checks.
 
-- `alg` must be `RS256`.
-- `kid` is required.
-- The matching public key must be present after allowed refresh.
-- Signature verification uses Node `crypto`.
-- Issuer, audience, expiration, and nonce are checked after signature
-  verification.
-- Unsupported algorithms, malformed segments, and missing claims are rejected.
-- JWKS is cached by URL with configurable TTL (`jwksCacheTtlMs`).
-- An unknown `kid` triggers one forced JWKS refetch before rejection.
-- Cached or inline `jwks` inputs are respected according to their type.
+JWKS behavior includes URL-keyed caching with configurable TTL and a bounded forced refresh for an unknown `kid`. A refresh does not bypass signature verification.
 
-The Google verifier validates against Google’s official issuer and JWKS. A JWKS
-refresh occurs only for unknown key IDs and does not bypass signature
-verification.
+## 10. External token verification
 
-### Apple-specific behavior
+**Main implementation:** `src/external-token/verifier.ts`  
+**Factory:** `createExternalTokenVerifier`
 
-Apple profile data comes from the token itself, so its `id_token` is verified
-before profile extraction.
+This service verifies JWTs issued by explicitly trusted external identity providers. It is separate from the package's own access/refresh token flow.
 
-## Refresh tokens and session revocation
+### Capabilities
 
-### Refresh rotation
+- Configure an allowlist of trusted issuers.
+- Configure per-issuer audiences and allowed algorithms.
+- Resolve keys from inline JWKS, a sync/async resolver, or a remote JWKS URL.
+- Require HTTPS for remote JWKS by default, with an explicit insecure-development override.
+- Reject unsupported schemes and `alg: none`.
+- Enforce a 16 KiB token-size limit.
+- Validate signature, issuer, audience, expiration, not-before, token age, required claims, and expected token type where configured.
+- Support `maxTokenAge` at issuer and per-call level.
+- Return a structured result containing payload, issuer, and audience.
 
-`auth.refresh()`:
+Unknown keys, invalid signatures, malformed tokens, and untrusted issuers fail closed.
 
-- Decodes and verifies the refresh token.
-- Rejects non-refresh tokens.
-- Requires `jti`.
-- Consumes the record atomically when `consume` exists, otherwise performs
-  get-plus-revoke.
-- Rejects consumed or revoked tokens.
-- Checks session version before a new access token is issued.
-- Mints a new access/refresh session through `login`.
+## 11. OAuth token introspection
 
-This makes replay of a consumed refresh token fail.
+**Main implementation:** `src/oauth/introspection/`  
+**Public API:** `TokenIntrospector`, `createTokenIntrospector`, `IntrospectionError`
 
-### Logout
+The package includes an RFC 7662 token introspection client.
 
-`auth.logout()` and `auth.revoke()` remove a refresh record. They cannot
-invalidate already-issued access tokens, which remain valid until expiry.
+- Sends introspection requests to the configured endpoint.
+- Supports client-secret authentication using HTTP Basic or configured body credentials.
+- Validates introspection responses.
+- Uses a bounded LRU cache for introspection results.
+- Requires HTTPS for the endpoint according to the documented security policy.
+- Exposes typed introspection failures.
 
-### Session stores
+Introspection is distinct from local JWT verification: it asks the configured authorization server to report token activity/metadata.
 
-Configuring `sessionStore` enables immediate session invalidation:
+## 12. Persistence and storage contracts
 
-- Tokens carry `sv`, the session version at login.
-- `verify()` and `refresh()` compare `sv` against the current version.
-- `revokeAllSessions(userId)` bumps the version and invalidates all current
-  tokens for that user.
-- Without a store, `revokeAllSessions()` returns `false`.
+**Main implementation:** `src/adapters/contracts/`, `src/adapters/adapter-registry.ts`, `src/core/auth.ts`
 
-This is opt-in because it adds one store read per verification.
+The package does not bundle database clients. It defines contracts that applications implement using Redis, PostgreSQL, MongoDB, DynamoDB, or custom infrastructure.
 
-## Framework adapters
+### Unified `PersistenceAdapter`
 
-`src/adapters` provides structural adapters for:
+The unified adapter can provide domains such as:
 
-- Express: `expressAdapter(auth)` returns `authenticate`, `requirePermission`,
-  and `requireRole`.
-- Fastify: `fastifyAdapter(auth)` registers a plugin and exposes
-  `authenticate`.
-- Koa: `koaAdapter(auth)` returns middleware.
-- uWebSockets.js: `uwsAdapter(auth)` returns handler factories and `json`.
-- `createAdapters(auth)` constructs all adapters at once.
+- `keyValue`
+- `sessions`
+- `refreshTokens`
+- `revocations`
+- `versions`
+- `users`
 
-Adapter properties:
+It may also expose `initialize()` and `close()` lifecycle hooks.
 
-- No web framework imports or peer dependencies.
-- Request/response objects are read structurally.
-- Adapted permissions and roles return 401 or 403 as appropriate.
-- uWS request data is snapshotted before async work through
-  `snapshotUwsRequest`, because native uWS objects are unsafe afterward.
-- Query-token extraction is opt-in via `{ query: true }`, avoiding tokens in
-  logs, history, and referrers by default.
-- Direct `verifyRequest` and `extractBearerToken` are available for custom
-  adapters.
+### Ownership model
 
-## Password hashing
+- The package owns the contracts, validation, routing, and required security semantics.
+- The application owns database clients, connections, pools, credentials, migrations, and infrastructure lifecycle.
+- Explicit per-domain stores (for example `userStore`, `refreshStore`, or `sessionStore`) take precedence over corresponding adapter-provided domains.
+- Omitted domains may fall back to in-memory behavior; that fallback is not durable across restarts and is not suitable for multi-instance production state.
+- Adapter capabilities are validated at initialization. Declaring atomic support without implementing the corresponding operation is a configuration error.
+- `initialize()` / `close()` coordinate adapter lifecycle; the application remains responsible for ownership and safe shutdown of its connections.
 
-The scrypt implementation enforces bounded cost parameters and serializes them
-into the resulting hash. Hashes can be upgraded later, and verification returns
-`false` for parameters outside configured/per package bounds.
+### Storage contracts and atomic capabilities
 
-## Utilities
+The architecture defines contracts for key-value, refresh-token, session, revocation, and version storage. Capability declarations include operations such as:
 
-Exported helpers:
+- Atomic consume.
+- Atomic refresh-token rotation.
+- Atomic increment.
+- TTL support.
 
-- `isValidExpiresIn`: validates supported TTL expressions.
-- `parseExpiresIn`: converts an expression to seconds.
-- `randomToken`: cryptographically random hex token.
-- `randomState`: random string for OAuth state.
-- `extractBearerToken`: extracts a bearer token from a request structure.
-- `pkceVerifier` and `pkceChallenge`.
-- `createMemoryRefreshStore`, `createMemorySessionStore`, `createMemoryStateStore`.
+Operations that protect replay or cross-instance state must be implemented atomically by the backing store. Examples include Redis `GETDEL`/Lua or SQL conditional mutation/`DELETE ... RETURNING`, where appropriate to the data model.
 
-## Errors
+### Error model
 
-All auth errors extend `AuthError` and expose `code` and `status`:
+Persistence failures are normalized through `PersistenceErrorCode` and `PersistenceErrorInfo`. The application should monitor and handle backend outages; it must not treat a failed security-state lookup as proof that a token is valid.
 
-- `InvalidTokenError`: `INVALID_TOKEN`, 401
-- `TokenExpiredError`: `TOKEN_EXPIRED`, 401
-- `UnauthorizedError`: `UNAUTHORIZED`, 401
-- `ForbiddenError`: `FORBIDDEN`, 403
-- `ConfigurationError`: `CONFIGURATION_ERROR`, 500
-- `OAuthError`: `OAUTH_ERROR`, 401
-- `ProviderError`: `PROVIDER_ERROR`, 502
-- `ValidationError`: `VALIDATION_ERROR`, 400
+### Event adapters are separate
 
-## Built-in middleware and request parsing
+`EventAdapter` / `EventAdapters` transport auth lifecycle events. They are not authoritative persistence and must not be used as a substitute for refresh/session state storage.
 
-- Adapters authenticate from `Authorization: Bearer` or an `access_token`
-  cookie by default.
-- Optional and query modes are documented in README.
-- Extractors for headers, cookies, and query are framework-agnostic.
+## 13. In-memory stores
 
-## Live Google verification tools
+**Main implementation:** `src/stores/memory/`
 
-The package includes two scripts:
+Exported helpers include:
 
-- `scripts/verify-google-id-token.ts`: performs the full OAuth callback flow,
-  exchanges the authorization code, and validates the returned Google ID token.
-- `scripts/watch-google-jwks.mjs`: monitors Google’s discovery/JWKS endpoints,
-  records immutable snapshots and event logs, detects key additions/removals
-  and public-key changes, preserves state across restarts, and supports
-  optional JWT header inspection without printing the token.
+- `createMemoryRefreshStore`
+- `createMemorySessionStore`
+- `createMemoryStateStore`
 
-These tools do not force Google rotation and never print client secrets or full
-ID tokens.
+These stores are useful for local development, tests, and single-process examples. They are not durable across process restarts and do not coordinate state across multiple application instances. Production deployments requiring distributed refresh rotation, OAuth state consumption, or session revocation must provide shared stores with the required atomic capabilities.
 
-## Test and verification surface
+## 14. HTTP transport and retry
 
-- Deterministic tests in `test/**/*.test.ts` (Vitest) cover JWT,
-  passwords, RBAC, OAuth, OIDC/JWKS rotation scenarios, adapters, sessions,
-  persistence, and architecture/API exports.
-- Real-infrastructure tests run against PostgreSQL (`postgres:16-alpine`) and Redis (`redis:7-alpine`)
-  via testcontainers; no mock-only data paths remain for distributed atomicity.
-- `npm run lint`, `npm run typecheck`, `npm test`, and `npm run build` are the
-  core quality gates.
-- Optional Redis/PostgreSQL tests validate refresh atomicity.
-- Opt-in live Google tests and documentation are maintained but not required
-  for release.
+**Main implementation:** `src/http/transport.ts`, `src/http/retry.ts`
 
-## Limitations
+### HTTP client
 
-- Live Google signing-key rotation is not claimed as verified unless an actual
-  previously uncached key is observed and successfully validated.
-- In-memory stores are development-only and are not suitable for multi-instance
-  production deployments.
-- Removing or revoking a session does not invalidate already-issued access
-  tokens before expiry.
-- Provider rotation handling is bounded by one JWKS refresh per verification.
+The package provides an injectable HTTP client used by OAuth, JWKS, and related network operations.
+
+Capabilities include:
+
+- Configurable transport.
+- Request timeout and `AbortController` cancellation.
+- Combining caller-provided abort signals.
+- Maximum response-size enforcement using content-length checks and streamed-body accounting.
+- Redirect policy (error by default).
+- Base URL support for relative endpoints.
+- Default and per-request headers.
+- Defensive configuration snapshots.
+- Per-instance `HttpClient` configuration.
+
+The `HttpClient` class provides isolated per-client configuration. Module-level helpers (`configureHttp`, `dispatchHttp`, `getHttpConfig`, `resetHttpConfig`) operate on the shared default client for backward compatibility. Configuring that shared default client is process-wide; use `new HttpClient(config)` when independent clients need independent settings.
+
+### Retry
+
+`dispatchHttpWithRetry` / `resolveRetryConfig` provide:
+
+- Exponential backoff with full jitter.
+- Configurable retryable status codes; documented defaults include 429, 502, 503, and 504.
+- Retry handling for selected network failures.
+- No retry for aborted requests.
+- Idempotent methods (GET/HEAD/OPTIONS) retried by default.
+- Non-idempotent retries require explicit opt-in.
+- Bounded retry count and optional total deadline.
+
+Retries must be configured with awareness of request idempotency. Retrying a token exchange or another state-changing operation can duplicate effects if explicitly enabled without provider/application guarantees.
+
+## 15. Framework adapters
+
+**Main implementation:** `src/adapters/`
+
+Adapters are thin structural integrations; they do not import the frameworks or require them as package peer dependencies. Install the framework separately in the consuming application.
+
+| Framework | Adapter | Integration |
+|---|---|---|
+| Express | `expressAdapter(auth)` | Middleware factory |
+| Fastify | `fastifyAdapter(auth)` | Plugin and authenticate decorator |
+| Koa | `koaAdapter(auth)` | Middleware |
+| uWebSockets.js | `uwsAdapter(auth)` | Handler wrappers and JSON response helper |
+
+### Shared behavior
+
+- Extract credentials from supported request structures.
+- Use `auth.verifyRequest()` for core verification.
+- Attach the verified principal/token to framework request/context state.
+- Map typed auth errors to appropriate HTTP status responses.
+- Avoid returning secrets, tokens, or stack traces in authentication error responses.
+- Support optional-auth behavior where documented.
+- Query-string token extraction is disabled by default; opt in explicitly when needed.
+
+### uWebSockets.js handling
+
+Native uWS request objects have lifecycle constraints around asynchronous work. The adapter snapshots request information before awaiting authentication operations using `snapshotUwsRequest`.
+
+### Custom integrations
+
+`verifyRequest` and `extractBearerToken` can be used directly to build integrations for other frameworks or server runtimes.
+
+## 16. Request-scoped auth context
+
+**Main implementation:** `src/core/context.ts`
+
+The package uses Node.js `AsyncLocalStorage` to carry request-scoped metadata across asynchronous operations.
+
+`AuthContext` includes:
+
+- `requestId`
+- `traceId`
+- `operationId`
+- Optional `tenantId`
+- Additional application-defined string-keyed properties
+
+Helpers:
+
+- `createAuthContext(init?)`
+- `runWithAuthContext(context, fn)`
+- `getCurrentAuthContext()`
+
+Missing identifiers can be generated using cryptographically secure random values. `operationId` defaults to `requestId` when not supplied. Nested contexts are scoped to their callback and restore the outer context afterward.
+
+Auth operations, framework adapters, and diagnostics can use the active context to correlate events. Context propagation is correlation metadata, not an authorization boundary; applications must still validate tenant and subject access.
+
+## 17. Diagnostics and observability
+
+**Main implementation:** `src/diagnostics/`
+
+The diagnostics emitter supports:
+
+- Auth lifecycle diagnostic events, including login, token validation, OAuth authorization/callback, and related operations.
+- Synchronous or asynchronous observer callbacks.
+- A bounded pending-event queue (architecture documents a default capacity of 32).
+- Configurable overflow behavior: `drop` or `report`.
+- Observer error callback routing.
+- Queue/statistics inspection.
+- Reset of observer/queue/statistics configuration.
+
+Public helpers include:
+
+- `emitDiagnostic`
+- `setDiagnosticsObserver`
+- `resetDiagnostics`
+- `getDiagnosticsStats`
+- `setDiagnosticsOverflowPolicy`
+- `setDiagnosticsErrorCallback`
+
+Diagnostics are best-effort operational signals, not a durable audit log. If the application requires durable audit delivery, it must provide and operate an appropriate event pipeline.
+
+## 18. Structured safe logging
+
+**Main implementation:** `src/logging/logger.ts`  
+**Helper:** `createSafeLogger`
+
+Logging is optional and disabled by default. The package does not add Pino, Winston, Bunyan, or another logging framework as a runtime dependency.
+
+- Accepts a structurally compatible logger with optional `debug`, `info`, `warn`, and `error` methods.
+- Missing methods are no-ops.
+- Logger exceptions are isolated so logging does not interrupt authentication operations.
+- The logger object is not mutated.
+- Known sensitive fields (passwords, hashes, secrets, access/refresh tokens, ID tokens, authorization codes, OAuth state, PKCE verifier fields, and related credentials) are sanitized from nested payloads and arrays.
+- Internal events use stable event names and non-sensitive metadata.
+
+Applications remain responsible for reviewing their own logger, transport, and downstream log retention policies.
+
+## 19. Typed errors
+
+**Main implementation:** `src/errors/`
+
+Auth errors extend `AuthError` and expose structured fields such as `code`, `status`, and `cause`, with JSON serialization support.
+
+| Error | Code | Typical HTTP status |
+|---|---|---:|
+| `AuthError` | `AUTH_ERROR` | 401 |
+| `InvalidTokenError` | `INVALID_TOKEN` | 401 |
+| `TokenExpiredError` | `TOKEN_EXPIRED` | 401 |
+| `UnauthorizedError` | `UNAUTHORIZED` | 401 |
+| `ForbiddenError` | `FORBIDDEN` | 403 |
+| `ConfigurationError` | `CONFIGURATION_ERROR` | 500 |
+| `OAuthError` | `OAUTH_ERROR` | 401 |
+| `ProviderError` | `PROVIDER_ERROR` | 502 |
+| `ValidationError` | `VALIDATION_ERROR` | 400 |
+| `InvalidRedirectUriError` | `INVALID_REDIRECT_URI` | 400 |
+
+Exact adapter response formatting is framework-specific. Internal causes should be retained for diagnostics without exposing stack traces or sensitive upstream response content to clients.
+
+## 20. Utilities and helper exports
+
+The public utility surface includes helpers such as:
+
+- `extractBearerToken`
+- `parseExpiresIn`
+- `isValidExpiresIn`
+- `randomToken`
+- `randomState`
+- `sha256`
+- `pkceVerifier`
+- `pkceChallenge`
+
+The package also exports in-memory store factories and provider helpers. Refer to `src/index.ts`, package exports, and the README API reference as the authority for the exact release's public symbol list.
+
+## 21. Verification and test surface
+
+The repository documents Vitest-based tests for:
+
+- JWT signing and verification.
+- Password hash algorithms and legacy verification.
+- RBAC role inheritance and wildcard matching.
+- OAuth state, PKCE, providers, and redirect URI validation.
+- OIDC/JWKS behavior and key-rotation scenarios.
+- External token verification.
+- Framework adapters.
+- Session and refresh-token lifecycle.
+- Persistence contracts and architecture/public API exports.
+
+The documented quality gates include:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run pack:check
+```
+
+The repository also documents integration tests using Testcontainers for PostgreSQL and Redis, and provider/live Google verification tooling. Live provider checks are opt-in and are not equivalent to deterministic CI tests.
+
+A test's presence in the repository is not proof that it passed in a particular environment. Release records should retain the actual CI result for the exact commit and package artifact.
+
+## 22. Operational and security boundaries
+
+For production use:
+
+- Generate signing secrets using a cryptographically secure random generator; use at least 32 bytes of high-entropy secret material as documented in the README.
+- Prefer a distinct refresh signing secret.
+- Keep signing algorithms explicitly configured and pinned.
+- Use shared durable stores for refresh rotation and session revocation across instances.
+- Ensure required atomic storage capabilities are genuinely atomic in the chosen backend.
+- Keep OAuth redirect allowlists exact and use HTTPS outside loopback development.
+- Keep PKCE enabled.
+- Avoid query-string tokens because URLs can leak through logs, browser history, and referrers.
+- Use short access-token lifetimes when appropriate.
+- Redact credentials in application logs and telemetry.
+- Configure timeouts, response-size limits, and retry policy for external HTTP dependencies.
+- Monitor storage, diagnostics queue behavior, provider failures, and authentication latency.
+
+### Application responsibilities not provided by the library
+
+The integrating application is responsible for:
+
+- Login and API rate limiting.
+- MFA and step-up authentication.
+- Email verification.
+- Password reset and account recovery.
+- Account lockout and abuse detection.
+- CSRF protection when using cookie-based authentication.
+- User lifecycle, profile policy, and account deletion.
+- Secret provisioning and rotation operations.
+- Durable audit storage and delivery.
+- Database provisioning, migrations, backups, access control, and connection lifecycle.
+- Tenant isolation and application-specific authorization rules.
+
+## 23. Known limitations
+
+- In-memory stores are process-local, non-durable, and unsuitable for multi-instance production deployments.
+- Revoking a refresh token does not automatically invalidate already-issued stateless access tokens.
+- Immediate access-token/session invalidation requires a correctly configured session/revocation store and verification checks.
+- OAuth/OIDC provider capabilities differ; not every provider exposes the same profile fields or ID-token behavior.
+- JWKS refresh on unknown key identifiers is bounded; it does not force a provider to rotate keys.
+- Live Google key rotation is not considered verified merely because monitoring scripts ran; verification requires observing and successfully validating a previously uncached key.
+- Diagnostics are bounded best-effort events, not a durable audit trail.
+- The package does not manage user accounts or provide MFA, email verification, password reset, or rate limiting.
+
+## 24. Related documentation
+
+- [`README.md`](../README.md) — installation, quick start, configuration, usage examples, storage integration, security guidance, and API reference.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — module boundaries, dependency direction, runtime flows, storage contracts, and architecture decisions.
+- [`package.json`](../package.json) and `src/index.ts` — package metadata and exact public exports.
+
+## 25. Documentation maintenance
+
+Update this file when an implemented capability, public export, default, security guarantee, storage contract, adapter behavior, or operational limitation changes.
+
+Before release, verify that:
+
+- Feature claims match implementation and tests.
+- README examples and configuration defaults match the public types.
+- Architecture diagrams and module names remain current.
+- Public exports match `src/index.ts` and `package.json`.
+- Security statements distinguish package guarantees from application/store responsibilities.
+- Tests are described as coverage, not as passed results unless CI evidence exists.
+- Volatile facts (dependency versions, file counts, test totals) are omitted or tied to a specific revision.

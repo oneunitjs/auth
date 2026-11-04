@@ -11,7 +11,7 @@ Monorepo: https://github.com/mayank040902/framework
 
 ## What is this?
 
-`@oneunit/auth` (v2.0.2) is a library, not an identity service. It provides the
+`@oneunit/auth` (v2.1.0-beta.1) is a library, not an identity service. It provides the
 building blocks your application uses to authenticate users, authorize access,
 and manage sessions:
 
@@ -758,7 +758,7 @@ The full public export surface from `@oneunit/auth`:
 `ProviderError`, `ValidationError`, `InvalidRedirectUriError`
 
 **Utilities:** `extractBearerToken`, `parseExpiresIn`, `isValidExpiresIn`,
-`randomToken`, `randomState`, `sha256`
+`randomToken`, `randomState`
 
 **Types:** `AuthOptions`, `LoginOptions`, `LoginResult`, `JwtPayload`,
 `JwtSignOptions`, `JwtVerifyOptions`, `Secret`, `RoleDefinition`,
@@ -773,23 +773,6 @@ The full public export surface from `@oneunit/auth`:
 `FastifyLike`, `FastifyRequestLike`, `FastifyReplyLike`, `PersistenceAdapter`,
 `EventAdapters`, `PersistenceErrorCode`, `PersistenceErrorInfo`,
 `KeyValueStore`, `RevocationStore`, `VersionStore`, `Logger`, `AuthContext`
-
-## Examples
-
-Run the bundled example:
-
-```bash
-npm run example
-```
-
-From an installed copy:
-
-```bash
-npx tsx node_modules/@oneunit/auth/examples/basic.ts
-```
-
-It demonstrates login, verification, RBAC, password hashing, refresh rotation
-and replay protection, session revocation, OAuth provider setup, and PKCE.
 
 ## Development
 
