@@ -9,6 +9,7 @@ import {
   encodeRefreshToken,
   InvalidTokenError,
   TokenExpiredError,
+  UnauthorizedError,
   ValidationError,
 } from "../../src/index.js";
 import type { JwtPayload } from "../../src/index.js";
@@ -84,6 +85,70 @@ describe("jwt", () => {
     await expect(() =>
       decode(token, SECRET, { issuer: "other" }),
     ).rejects.toThrow(InvalidTokenError);
+  });
+});
+
+function base64urlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function parseBase64urlJson(part: string): unknown {
+  return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
+}
+
+function tamperPayload(token: string, patch: Record<string, unknown>): string {
+  const [header, payload, signature] = token.split(".");
+  const next = { ...(parseBase64urlJson(payload) as Record<string, unknown>), ...patch };
+  return [header, base64urlJson(next), signature].join(".");
+}
+
+function tamperSignature(token: string): string {
+  const [header, payload] = token.split(".");
+  return [header, payload, "tampered-signature-that-does-not-verify"].join(".");
+}
+
+describe("JWT expiration bypass / signature forgery regression", () => {
+  it("decodes a valid expired token when ignoreExpiration is true", async () => {
+    const token = await encode({ userId: 1 }, SECRET, { expiresIn: 0 });
+    const claims = await decode(token, SECRET, { ignoreExpiration: true });
+    expect(claims.userId).toBe(1);
+  });
+
+  it("rejects an expired token with a modified payload when ignoreExpiration is true", async () => {
+    const token = await encode({ userId: 1 }, SECRET, { expiresIn: 0 });
+    const forged = tamperPayload(token, { userId: 999, role: "admin" });
+    await expect(
+      decode(forged, SECRET, { ignoreExpiration: true }),
+    ).rejects.toThrow(InvalidTokenError);
+  });
+
+  it("rejects an expired token with a modified signature when ignoreExpiration is true", async () => {
+    const token = await encode({ userId: 1 }, SECRET, { expiresIn: 0 });
+    const forged = tamperSignature(token);
+    await expect(
+      decode(forged, SECRET, { ignoreExpiration: true }),
+    ).rejects.toThrow(InvalidTokenError);
+  });
+
+  it("rejects an expired refresh token with an altered jti when ignoreExpiration is true", async () => {
+    const token = await encodeRefreshToken(
+      { userId: 1 },
+      SECRET,
+      { jwtid: "original-jti", expiresIn: 0 },
+    );
+    const forged = tamperPayload(token, { jti: "attacker-jti" });
+    await expect(
+      decode(forged, SECRET, { ignoreExpiration: true, acceptTokenType: "refresh" }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an expired access token presented as a refresh token when ignoreExpiration is true", async () => {
+    const token = await encodeAccessToken({ userId: 1 }, SECRET, {
+      expiresIn: 0,
+    });
+    await expect(
+      decode(token, SECRET, { ignoreExpiration: true, acceptTokenType: "refresh" }),
+    ).rejects.toThrow(UnauthorizedError);
   });
 });
 

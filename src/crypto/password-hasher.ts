@@ -40,9 +40,6 @@ const MAX_SALT_BYTES = 64;
 const MIN_HASH_LENGTH = 16;
 const MAX_HASH_LENGTH = 64;
 const MAX_ENCODED_LENGTH = 512;
-const VERIFY_MAX_MEMORY_KIB = 65_536;
-const VERIFY_MAX_ITERATIONS = 3;
-const VERIFY_MAX_PARALLELISM = 1;
 
 export interface Argon2idPolicy {
   memoryKiB?: number;
@@ -267,9 +264,9 @@ export class Argon2idPasswordHasher implements PasswordHasher {
       return false;
     }
     if (
-      parsed.memoryKiB > VERIFY_MAX_MEMORY_KIB ||
-      parsed.iterations > VERIFY_MAX_ITERATIONS ||
-      parsed.parallelism > VERIFY_MAX_PARALLELISM
+      parsed.memoryKiB > MAX_MEMORY_KIB ||
+      parsed.iterations > MAX_ITERATIONS ||
+      parsed.parallelism > MAX_PARALLELISM
     ) {
       return false;
     }

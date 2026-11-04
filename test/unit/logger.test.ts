@@ -270,3 +270,81 @@ describe("Logger security: no secrets in payloads", () => {
     expect(loggedJson).not.toContain("test-state-123");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Security tests: nested and array payloads are sanitized recursively
+// ---------------------------------------------------------------------------
+
+describe("Logger security: nested and array payloads", () => {
+  function capture() {
+    const payloads: unknown[] = [];
+    const logger = createSafeLogger({
+      info: (payload) => {
+        payloads.push(payload);
+      },
+    } as Logger);
+    return { logger, payloads };
+  }
+
+  it("removes nested accessToken", () => {
+    const { logger, payloads } = capture();
+    logger.info({ request: { accessToken: "secret-token", userId: 1 } }, "msg");
+    expect(JSON.stringify(payloads)).not.toContain("secret-token");
+    expect(JSON.stringify(payloads)).toContain("userId");
+  });
+
+  it("removes deeply nested clientSecret", () => {
+    const { logger, payloads } = capture();
+    logger.info({
+      oauth: { client: { clientSecret: "super-secret" } },
+    }, "msg");
+    expect(JSON.stringify(payloads)).not.toContain("super-secret");
+  });
+
+  it("removes nested authorization header", () => {
+    const { logger, payloads } = capture();
+    logger.info({ headers: { authorization: "Bearer sensitive" } }, "msg");
+    expect(JSON.stringify(payloads)).not.toContain("Bearer sensitive");
+  });
+
+  it("removes nested idToken", () => {
+    const { logger, payloads } = capture();
+    logger.info({ token: { idToken: "secret-id-token" } }, "msg");
+    expect(JSON.stringify(payloads)).not.toContain("secret-id-token");
+  });
+
+  it("sanitizes secrets inside arrays of objects", () => {
+    const { logger, payloads } = capture();
+    logger.info({
+      attempts: [
+        { password: "pw-one" },
+        { password: "pw-two" },
+        { safe: "visible" },
+      ],
+    }, "msg");
+    const json = JSON.stringify(payloads);
+    expect(json).not.toContain("pw-one");
+    expect(json).not.toContain("pw-two");
+    expect(json).toContain("safe");
+  });
+
+  it("matches secret keys case-insensitively", () => {
+    const { logger, payloads } = capture();
+    logger.info({
+      ACCESSTOKEN: "upper-case",
+      RefreshToken: "mixed-case",
+      CLIENT_SECRET: "snake-case",
+    }, "msg");
+    const json = JSON.stringify(payloads);
+    expect(json).not.toContain("upper-case");
+    expect(json).not.toContain("mixed-case");
+    expect(json).not.toContain("snake-case");
+  });
+
+  it("preserves non-secret nested values", () => {
+    const { logger, payloads } = capture();
+    logger.info({ request: { userId: 42, path: "/login" } }, "msg");
+    expect(JSON.stringify(payloads)).toContain("42");
+    expect(JSON.stringify(payloads)).toContain("/login");
+  });
+});

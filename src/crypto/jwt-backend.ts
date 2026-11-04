@@ -1,6 +1,7 @@
 import {
   SignJWT,
   jwtVerify,
+  compactVerify,
   decodeJwt,
   type JWTPayload,
   type JWTHeaderParameters,
@@ -199,11 +200,11 @@ export class JwtBackendImpl implements JwtBackend {
       ignoreExpiration = false,
     } = options;
 
-    try {
-      const verificationKey = normalizeVerificationKey(
-        await this.resolveVerificationKey(token, options),
-      );
+    const verificationKey = normalizeVerificationKey(
+      await this.resolveVerificationKey(token, options),
+    );
 
+    try {
       const { payload } = (await jwtVerify(token, verificationKey, {
         algorithms: algorithms as string[],
         clockTolerance: options.clockTolerance,
@@ -218,13 +219,25 @@ export class JwtBackendImpl implements JwtBackend {
       }
       if (error instanceof Error) {
         if (error.name === "JWTExpired" && ignoreExpiration) {
+          let payload: JWTPayload;
           try {
-            return (decodeJwt(token) as JWTPayload) as JwtPayload;
+            // jwtVerify verifies the JWS signature before validating claims, so
+            // a JWTExpired error means the signature is already
+            // cryptographically valid. Re-verify the signature explicitly with
+            // compactVerify (signature verification only, no claim/expiration
+            // checks) so expiration can be ignored without ever accepting an
+            // unverified or forged token.
+            await compactVerify(token, verificationKey, {
+              algorithms: algorithms as string[],
+            });
+            payload = (decodeJwt(token) as JWTPayload) as JwtPayload;
           } catch {
             throw new InvalidTokenError("Invalid or expired token", {
               cause: error,
             });
           }
+          this.validateClaims(payload, options);
+          return payload;
         }
         if (error.name === "JWTExpired") {
           throw new TokenExpiredError("Token has expired", { cause: error });

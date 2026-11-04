@@ -2,19 +2,30 @@ import type { Logger } from "./types.js";
 
 const SECRET_KEYS = new Set([
   "password",
-  "passwordHash",
+  "passwordhash",
   "secret",
-  "refreshSecret",
-  "accessToken",
-  "refreshToken",
+  "refreshsecret",
+  "accesstoken",
+  "refreshtoken",
   "id_token",
+  "idtoken",
   "token",
-  "authorizationCode",
+  "authorizationcode",
   "code",
   "verifier",
-  "codeVerifier",
+  "codeverifier",
   "state",
+  "clientsecret",
+  "client_secret",
+  "access_token",
+  "refresh_token",
+  "idtoken",
+  "authorization",
 ]);
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEYS.has(key.toLowerCase());
+}
 
 function sanitizePayload(payload: unknown): unknown {
   if (payload === null || typeof payload !== "object") {
@@ -25,10 +36,10 @@ function sanitizePayload(payload: unknown): unknown {
   }
   const next: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload as Record<string, unknown>)) {
-    if (SECRET_KEYS.has(key)) {
+    if (isSecretKey(key)) {
       continue;
     }
-    next[key] = value;
+    next[key] = sanitizePayload(value);
   }
   return next;
 }
