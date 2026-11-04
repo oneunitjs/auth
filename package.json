@@ -1,0 +1,126 @@
+{
+  "name": "@oneunit/auth",
+  "version": "2.0.2",
+  "description": "Framework-agnostic authentication: JWT, generic RBAC, password hashing, and social OAuth. Works standalone or with Express, Fastify, Koa, and uWebSockets.js.",
+  "type": "module",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs",
+      "default": "./dist/esm/index.js"
+    },
+    "./kafka": {
+      "types": "./dist/types/adapters/events/kafka/index.d.ts",
+      "import": "./dist/esm/adapters/events/kafka/index.js",
+      "require": "./dist/cjs/adapters/events/kafka/index.cjs",
+      "default": "./dist/esm/adapters/events/kafka/index.js"
+    },
+    "./*": {
+      "types": "./dist/types/*.d.ts",
+      "import": "./dist/esm/*.js",
+      "require": "./dist/cjs/*.cjs",
+      "default": "./dist/esm/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "examples",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.esm.json && tsc -p tsconfig.build.cjs.json && node scripts/fix-cjs-imports.cjs",
+    "dev": "tsc -w -p tsconfig.build.esm.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --reporter=verbose",
+    "test:unit": "vitest run test/unit --reporter=verbose",
+    "test:integration": "vitest run test/integration --reporter=verbose",
+    "test:oauth": "vitest run test/oauth --reporter=verbose",
+    "test:providers": "vitest run test/providers --reporter=verbose",
+    "test:security": "vitest run test/security --reporter=verbose",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build && npm test",
+    "pack:check": "npm pack --dry-run",
+    "example": "npm run build && tsx examples/basic.ts",
+    "lint": "pnpm exec eslint src test",
+    "verify:google:id-token": "npm run build && tsx scripts/verify-google-id-token.ts",
+    "observe:google:jwks": "node scripts/watch-google-jwks.mjs"
+  },
+  "keywords": [
+    "auth",
+    "authentication",
+    "jwt",
+    "oauth",
+    "oauth2",
+    "oidc",
+    "rbac",
+    "permissions",
+    "roles",
+    "google",
+    "github",
+    "express",
+    "fastify",
+    "koa",
+    "uwebsockets",
+    "typescript",
+    "oneunit"
+  ],
+  "author": "mayank",
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mayank040902/oneunit.git",
+    "directory": "packages/auth"
+  },
+  "bugs": {
+    "url": "https://github.com/mayank040902/oneunit/issues"
+  },
+  "homepage": "https://github.com/mayank040902/oneunit/tree/master/packages/auth#readme",
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "jose": "^6.2.15"
+  },
+  "optionalDependencies": {
+    "bcrypt": "^5.1.1"
+  },
+  "peerDependencies": {
+    "kafkajs": "^2.2.4"
+  },
+  "peerDependenciesMeta": {
+    "kafkajs": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@testcontainers/kafka": "^12.2.1",
+    "@testcontainers/postgresql": "^12.2.1",
+    "@testcontainers/redis": "^12.2.1",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
+    "@vitest/coverage-v8": "^5.1.0",
+    "ioredis": "^6.0.0",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.23.1",
+    "testcontainers": "^12.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^5.1.0"
+  }
+}
