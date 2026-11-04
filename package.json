@@ -84,13 +84,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mayank040902/oneunit.git",
+    "url": "git+https://github.com/oneunitjs/auth.git",
     "directory": "packages/auth"
   },
   "bugs": {
-    "url": "https://github.com/mayank040902/oneunit/issues"
+    "url": "https://github.com/oneunitjs/auth/issues"
   },
-  "homepage": "https://github.com/mayank040902/oneunit/tree/master/packages/auth#readme",
+  "homepage": "https://github.com/oneunitjs/auth#readme",
   "dependencies": {
     "@noble/hashes": "^2.4.0",
     "jose": "^6.2.15"
