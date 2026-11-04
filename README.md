@@ -685,6 +685,9 @@ Application responsibilities not covered by this package: rate limiting, MFA,
 email verification, password reset flows, account lockout, CSRF for cookie-based
 auth, durable audit delivery, and secret rotation operations.
 
+See [SECURITY.md](./docs/SECURITY.md) for supported versions, vulnerability
+reporting, and disclosure expectations.
+
 ## Errors and troubleshooting
 
 All errors extend `AuthError` and expose `code` and `status`:
