@@ -100,7 +100,7 @@
     "jose": "^6.2.15"
   },
   "optionalDependencies": {
-    "bcrypt": "^5.1.1"
+    "bcrypt": "^6.0.0"
   },
   "peerDependencies": {
     "kafkajs": "^2.2.4"

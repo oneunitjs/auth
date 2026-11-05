@@ -3,8 +3,6 @@ name: Publish to npm
 on:
   push:
     tags: ['v*']
-  release:
-    types: [published]
 
 permissions:
   contents: read

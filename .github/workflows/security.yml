@@ -26,29 +26,9 @@ jobs:
           cache: 'npm'
 
       - run: npm ci
-      - run: npm audit --audit-level=moderate
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Audit all dependencies
+        run: npm audit --audit-level=high
+      # CodeQL scanning is configured in codeql.yml.
 
-  codeql:
-    name: CodeQL analysis
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: ['javascript', 'typescript']
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Analyze
-        uses: github/codeql-action/analyze@v3

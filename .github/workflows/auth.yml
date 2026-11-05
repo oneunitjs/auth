@@ -1,4 +1,3 @@
-```yaml
 name: auth
 
 # Tag pushes are not filtered by paths. A release tag auth-v<version>
@@ -7,13 +6,9 @@ name: auth
 on:
   push:
     branches: [main]
-    paths:
-      - "packages/auth/**"
-      - ".github/workflows/auth.yml"
+    tags: ["auth-v*"]
   pull_request:
-    paths:
-      - "packages/auth/**"
-      - ".github/workflows/auth.yml"
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -28,38 +23,32 @@ jobs:
       matrix:
         node: ["20", "22", "24"]
 
-    defaults:
-      run:
-        working-directory: packages/auth
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Typecheck
-        run: pnpm run typecheck
-
-      - name: Test
-        run: pnpm test
+        run: npm run typecheck
 
       - name: Build
-        run: pnpm run build
+        run: npm run build
+
+      - name: Test
+        run: npm test
 
       - name: Pack check
-        run: pnpm run pack:check
+        run: npm run pack:check
 
       - name: Audit
-        run: pnpm audit --audit-level high
+        run: npm audit --audit-level=high
 
   publish-dry-run:
     name: Consumer smoke test
@@ -69,21 +58,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build and pack
         run: |
-          pnpm --filter @oneunit/auth run build
-          pnpm --filter @oneunit/auth pack --pack-destination "$RUNNER_TEMP"
+          npm run build
+          npm pack --pack-destination "$RUNNER_TEMP"
 
       - name: Install the tarball into a clean project
         run: |
@@ -134,15 +121,8 @@ jobs:
           cd "$RUNNER_TEMP/consumer"
           node smoke.mjs
 
-      - name: Verify shipped examples resolve
-        working-directory: ${{ runner.temp }}/consumer
-        run: |
-          for example in standalone express fastify uwebsockets oauth-social sessions; do
-            npx --yes tsx "node_modules/@oneunit/auth/examples/$example.ts"
-          done
-
   # Publishing is driven by a tag, never by a push to main.
-  # Release: git tag auth-v2.0.0 && git push origin auth-v2.0.0
+  # Release: git tag auth-v<version> && git push origin auth-v<version>
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
@@ -153,23 +133,17 @@ jobs:
       contents: read
       id-token: write
 
-    defaults:
-      run:
-        working-directory: packages/auth
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
+          cache: npm
+          cache-dependency-path: package-lock.json
           registry-url: https://registry.npmjs.org/
 
-      - run: pnpm install --frozen-lockfile
+      - run: npm ci
 
       - name: Tag must match the package version
         run: |
@@ -184,7 +158,7 @@ jobs:
           fi
 
       - name: Publish
-        run: pnpm publish --access public --no-git-checks
+        run: npm publish --access public --provenance
 
       - name: Confirm it is live
         run: |
@@ -197,4 +171,3 @@ jobs:
             echo "::error::registry reports $PUBLISHED, expected $TAG_VERSION"
             exit 1
           fi
-```

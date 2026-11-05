@@ -3,7 +3,13 @@
 Framework-agnostic TypeScript authentication for Node.js. Use it from a plain
 script or plug it into Express, Fastify, Koa, or uWebSockets.js.
 
-[![CI](https://github.com/oneunitjs/actions/workflows/auth.yml/badge.svg)](https://github.com/oneunitjs/workflows/auth.yml)
+[![CI](https://github.com/oneunitjs/auth/actions/workflows/ci.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/ci.yml)
+[![Auth](https://github.com/oneunitjs/auth/actions/workflows/auth.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/auth.yml)
+[![Security](https://github.com/oneunitjs/auth/actions/workflows/security.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/security.yml)
+[![CodeQL](https://github.com/oneunitjs/auth/actions/workflows/codeql.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/codeql.yml)
+[![Publish](https://github.com/oneunitjs/auth/actions/workflows/publish.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/publish.yml)
+[![AI PR Summary](https://github.com/oneunitjs/auth/actions/workflows/ai-pr-summary.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/ai-pr-summary.yml)
+[![Bug Report](https://github.com/oneunitjs/auth/actions/workflows/bug-report.yml/badge.svg)](https://github.com/oneunitjs/auth/actions/workflows/bug-report.yml)
 [![npm](https://img.shields.io/npm/v/@oneunit/auth.svg)](https://www.npmjs.com/package/@oneunit/auth)
 [![license](https://img.shields.io/npm/l/@oneunit/auth.svg)](./LICENSE)
 
