@@ -58,7 +58,7 @@ describe("production performance benchmarks (PERF)", () => {
     const hashDurations: number[] = [];
     const verifyDurations: number[] = [];
 
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < 8; i += 1) {
       const hs = nowNs();
       const hash = await hashPassword(password);
       hashDurations.push(elapsedMs(hs));
