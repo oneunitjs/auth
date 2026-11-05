@@ -3,7 +3,7 @@
 Framework-agnostic TypeScript authentication for Node.js. Use it from a plain
 script or plug it into Express, Fastify, Koa, or uWebSockets.js.
 
-[![CI](https://github.com/oneunitjs/actions/workflows/auth.yml/badge.svg)](https://github.com/mayank040902/framework/actions/workflows/auth.yml)
+[![CI](https://github.com/oneunitjs/actions/workflows/auth.yml/badge.svg)](https://github.com/oneunitjs/actions/workflows/auth.yml)
 [![npm](https://img.shields.io/npm/v/@oneunit/auth.svg)](https://www.npmjs.com/package/@oneunit/auth)
 [![license](https://img.shields.io/npm/l/@oneunit/auth.svg)](./LICENSE)
 
