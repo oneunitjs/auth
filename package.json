@@ -120,7 +120,7 @@
     "@types/pg": "^8.23.1",
     "@typescript-eslint/eslint-plugin": "^8.72.1",
     "@typescript-eslint/parser": "^8.72.1",
-    "@vitest/coverage-v8": "^4.1.12",
+    "@vitest/coverage-v8": "^5.1.0",
     "ioredis": "^6.0.0",
     "kafkajs": "^2.2.4",
     "pg": "^8.23.1",
